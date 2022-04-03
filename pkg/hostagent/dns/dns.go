@@ -174,12 +174,21 @@ func (h *Handler) handleQuery(w dns.ResponseWriter, req *dns.Msg) {
 		case dns.TypeTXT:
 			txt, err := net.LookupTXT(q.Name)
 			if err == nil && len(txt) > 0 {
-				a := &dns.TXT{
-					Hdr: hdr,
-					Txt: txt,
+				for _, s := range txt {
+					a := &dns.TXT{
+						Hdr: hdr,
+					}
+					// Per RFC7208 3.3, when a TXT answer has multiple strings, the answer must be treated as
+					// a single concatenated string. net.LookupTXT is pre-concatenting such answers, which
+					// means we need to break it back up for this resolver to return a valid response.
+					if len(s) > 255 {
+						a.Txt = deConcatenate(s)
+					} else {
+						a.Txt = []string{s}
+					}
+					reply.Answer = append(reply.Answer, a)
+					handled = true
 				}
-				reply.Answer = append(reply.Answer, a)
-				handled = true
 			}
 		case dns.TypeNS:
 			ns, err := net.LookupNS(q.Name)
@@ -290,4 +299,25 @@ func Start(udpLocalPort, tcpLocalPort int, IPv6 bool, hosts map[string]string) (
 		}()
 	}
 	return server, nil
+}
+
+func deConcatenate(body string) []string {
+	var limit = 255
+	var result []string
+
+	for len(body) >= 1 {
+		result = append(result, string(body[:limit]))
+
+		// discard the elements that were copied over to result
+		body = body[limit:]
+
+		// final body portion
+		if len(body) < limit {
+			limit = len(body)
+		}
+
+	}
+
+	return result
+
 }
